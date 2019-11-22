@@ -2,6 +2,8 @@ package com.lavanya.imagelabeling
 
 import ai.fritz.core.Fritz
 import ai.fritz.vision.FritzVision
+import ai.fritz.vision.FritzVisionImage
+import ai.fritz.vision.ImageRotation
 import ai.fritz.vision.PredictorStatusListener
 import ai.fritz.vision.imagelabeling.FritzVisionLabelPredictor
 import ai.fritz.vision.imagelabeling.ImageLabelManagedModelFast
@@ -9,6 +11,7 @@ import android.os.Bundle
 import android.util.Log
 import android.util.Size
 import android.view.ViewGroup
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
 import kotlinx.android.synthetic.main.activity_main.*
@@ -18,32 +21,21 @@ class MainActivity : AppCompatActivity() {
 
     private val API_KEY = "dcf6227d8ecf4968b4e1a1b5fc1c483b"
     private val executor = Executors.newSingleThreadExecutor()
-    val TAG = javaClass.simpleName
-
-    var predictor: FritzVisionLabelPredictor? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        /*In the MainActivity class, initialize Fritz SDK.
+        */
         Fritz.configure(this, API_KEY)
 
-        view_finder.post { startCamera() }
-//        startCamera()
-
-//        val managedModel = ImageLabelManagedModelFast()
-//
-//        FritzVision.ImageLabeling.loadPredictor(
-//            managedModel,
-//            object : PredictorStatusListener<FritzVisionLabelPredictor> {
-//                override fun onPredictorReady(p0: FritzVisionLabelPredictor?) {
-//                    Log.d(TAG, "Image Labeling predictor is ready")
-//                    predictor = p0
-//                }
-//            })
-    }
-
-    fun fritzVisionLabelPredictor(): FritzVisionLabelPredictor? {
-        return predictor
+        /*Instead of calling `startCamera()` on the main thread, we use `viewFinder.post { ... }`
+         to make sure that `viewFinder` has already been inflated into the view when `startCamera()` is called.
+         */
+        view_finder.post {
+            startCamera()
+        }
     }
 
     //Function that creates and displays the camera preview
@@ -84,6 +76,53 @@ class MainActivity : AppCompatActivity() {
         val imageAnalysis = ImageAnalysis(analyzerConfig).apply {
             setAnalyzer(executor, ImageProcessor())
         }
+
+        /*  Bind use cases to lifecycle. If Android Studio complains about "this"
+            being not a LifecycleOwner, try rebuilding the project or updating the appcompat dependency to
+            version 1.1.0 or higher.
+         */
         CameraX.bindToLifecycle(this, preview, imageAnalysis)
+    }
+
+    /* It allows us to define a custom class implementing the ImageAnalysis.Analyzer interface,
+       which will be called with incoming camera frames.
+    */
+    inner class ImageProcessor : ImageAnalysis.Analyzer {
+        var predictor: FritzVisionLabelPredictor? = null
+        val TAG = javaClass.simpleName
+
+        override fun analyze(image: ImageProxy?, rotationDegrees: Int) {
+
+            //Handle all the ML logic here
+            val mediaImage = image?.image
+
+            val imageRotation = ImageRotation.getFromValue(rotationDegrees)
+
+            val visionImage = FritzVisionImage.fromMediaImage(mediaImage, imageRotation)
+
+            val managedModel = ImageLabelManagedModelFast()
+
+            FritzVision.ImageLabeling.loadPredictor(
+                managedModel,
+                object : PredictorStatusListener<FritzVisionLabelPredictor> {
+                    override fun onPredictorReady(p0: FritzVisionLabelPredictor?) {
+                        Log.d(TAG, "Image Labeling predictor is ready")
+                        predictor = p0
+                    }
+                })
+
+            val labelResult = predictor?.predict(visionImage)
+
+            runOnUiThread {
+                labelResult?.resultString?.let {
+                    val sname = it.split(":")
+                    Log.e(TAG, it)
+                    Log.e(TAG, sname[0])
+                    tv_name.text = sname[0]
+                } ?: kotlin.run {
+                    tv_name.visibility = TextView.INVISIBLE
+                }
+            }
+        }
     }
 }
